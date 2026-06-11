@@ -1,4 +1,3 @@
-import math
 from io import BytesIO
 
 import numpy as np
@@ -81,11 +80,6 @@ class AudioMixin:
         Uses torchaudio's phase vocoder (Spectrogram → TimeStretch →
         InverseSpectrogram) to stretch/compress audio in time without
         changing pitch.
-
-        For extreme speed ratios (> 2.0), the stretch is decomposed into
-        multiple passes using sqrt decomposition so that each individual
-        pass stays within a ratio where the phase vocoder produces
-        acceptable quality.
         """
         if speed == 1.0:
             return audio_tensor, sample_rate
@@ -110,7 +104,7 @@ class AudioMixin:
                 hop_length=hop_length,
                 power=None,
             )
-            stretch_op = torchaudio.transforms.TimeStretch(
+            stretch = torchaudio.transforms.TimeStretch(
                 n_freq=n_fft // 2 + 1,
                 hop_length=hop_length,
             )
@@ -119,26 +113,10 @@ class AudioMixin:
                 hop_length=hop_length,
             )
 
-            # Decompose extreme speed ratios into multiple passes so each
-            # pass has ratio ≤ 2.0 (where the phase vocoder quality is
-            # acceptable). Use iterative sqrt decomposition:
-            #   speed = p1 * p2 * ... * on  where each pi ≤ 2.0
-            remaining = speed
-            factors = []
-            while remaining > 2.0:
-                factors.append(math.sqrt(remaining))
-                remaining = math.sqrt(remaining)
-            factors.append(remaining)
-
             spec = to_spec(waveform)
-            for factor in factors:
-                spec = stretch_op(spec, factor)
-
-            # When the overall speed factor is high, the audio is very short.
-            # Use the known input length and speed to compute exact output
-            # length rather than relying solely on InverseSpectrogram.
+            stretched = stretch(spec, speed)
             expected_length = int(audio_tensor.shape[0] / speed)
-            result = to_wave(spec, length=expected_length)
+            result = to_wave(stretched, length=expected_length)
 
             result = result.squeeze(0).numpy()
             if channels_last:
